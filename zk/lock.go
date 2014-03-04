@@ -51,7 +51,7 @@ func (l *Lock) Lock() error {
 			for _, p := range parts[1:] {
 				pth += "/" + p
 				_, err := l.c.Create(pth, []byte{}, 0, l.acl)
-				if err != nil {
+				if err != nil && err != ErrNodeExists {
 					return err
 				}
 			}
@@ -98,9 +98,13 @@ func (l *Lock) Lock() error {
 			break
 		}
 
+		// Wait on the node next in line for the lock
 		_, _, ch, err := l.c.GetW(l.path + "/" + prevSeqPath)
 		if err != nil && err != ErrNoNode {
 			return err
+		} else if err != nil && err == ErrNoNode {
+			// try again
+			continue
 		}
 
 		ev := <-ch
