@@ -222,6 +222,33 @@ func TestChildWatch(t *testing.T) {
 	case _ = <-time.After(time.Second * 2):
 		t.Fatal("Child watcher timed out")
 	}
+
+	// Delete of the watched node should trigger the watch
+
+	children, stat, childCh, err = zk.ChildrenW("/gozk-test")
+	if err != nil {
+		t.Fatalf("Children returned error: %+v", err)
+	} else if stat == nil {
+		t.Fatal("Children returned nil stat")
+	} else if len(children) != 0 {
+		t.Fatal("Children should return 0 children")
+	}
+
+	if err := zk.Delete("/gozk-test", -1); err != nil && err != ErrNoNode {
+		t.Fatalf("Delete returned error: %+v", err)
+	}
+
+	select {
+	case ev := <-childCh:
+		if ev.Err != nil {
+			t.Fatalf("Child watcher error %+v", ev.Err)
+		}
+		if ev.Path != "/gozk-test" {
+			t.Fatalf("Child watcher wrong path %s instead of %s", ev.Path, "/")
+		}
+	case _ = <-time.After(time.Second * 2):
+		t.Fatal("Child watcher timed out")
+	}
 }
 
 func TestSetWatchers(t *testing.T) {
@@ -329,7 +356,7 @@ func TestExpiringWatch(t *testing.T) {
 		t.Fatal("Children should return at least 1 child")
 	}
 
-	zk.sessionId = 99999
+	zk.sessionID = 99999
 	zk.conn.Close()
 
 	select {
@@ -342,5 +369,30 @@ func TestExpiringWatch(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Child watcher timed out")
+	}
+}
+
+func TestRequestFail(t *testing.T) {
+	// If connecting fails to all servers in the list then pending requests
+	// should be errored out so they don't hang forever.
+
+	zk, _, err := Connect([]string{"127.0.0.1:32444"}, time.Second*15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zk.Close()
+
+	ch := make(chan error)
+	go func() {
+		_, _, err := zk.Get("/blah")
+		ch <- err
+	}()
+	select {
+	case err := <-ch:
+		if err == nil {
+			t.Fatal("Expected non-nil error on failed request due to connection failure")
+		}
+	case <-time.After(time.Second * 2):
+		t.Fatal("Get hung when connection could not be made")
 	}
 }
